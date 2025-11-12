@@ -1,0 +1,105 @@
+---
+import "../styles/global.css";
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout>
+  <section style="max-width: 720px; margin: 2rem auto;">
+    <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: 1rem;">
+      Cliente – Servidor (Sockets + MongoDB)
+    </h1>
+
+    <p style="margin-bottom: 1rem;">
+      Consulta y actualiza registros usando cédula. Operaciones: <code>GET</code>, <code>PUT</code>, <code>ADD</code>, <code>SUB</code>.
+    </p>
+
+    <div style="display:grid; gap:.75rem; grid-template-columns: 1fr 1fr;">
+      <label style="grid-column: 1 / span 2;">
+        Cédula
+        <input id="cedula" type="text" placeholder="1234567890" style="width:100%; padding:.5rem; border:1px solid #ccc; border-radius:.25rem;" />
+      </label>
+
+      <label>
+        Nombres
+        <input id="nombres" type="text" placeholder="Juan" style="width:100%; padding:.5rem; border:1px solid #ccc; border-radius:.25rem;" />
+      </label>
+
+      <label>
+        Apellidos
+        <input id="apellidos" type="text" placeholder="Nieve" style="width:100%; padding:.5rem; border:1px solid #ccc; border-radius:.25rem;" />
+      </label>
+
+      <label style="grid-column: 1 / span 2;">
+        Saldo
+        <input id="saldo" type="number" step="0.01" placeholder="150.75" style="width:100%; padding:.5rem; border:1px solid #ccc; border-radius:.25rem;" />
+      </label>
+    </div>
+
+    <div style="display:flex; gap:.5rem; margin-top: 1rem; flex-wrap: wrap;">
+      <button id="btnGet" style="padding:.5rem .75rem; border:1px solid #1f2937; background:#111827; color:#fff; border-radius:.25rem;">Buscar (GET)</button>
+      <button id="btnPut" style="padding:.5rem .75rem; border:1px solid #2563eb; background:#1d4ed8; color:#fff; border-radius:.25rem;">Guardar/Actualizar (PUT)</button>
+      <button id="btnAdd" style="padding:.5rem .75rem; border:1px solid #10b981; background:#059669; color:#fff; border-radius:.25rem;">Agregar Saldo (ADD)</button>
+      <button id="btnSub" style="padding:.5rem .75rem; border:1px solid #ef4444; background:#dc2626; color:#fff; border-radius:.25rem;">Disminuir Saldo (SUB)</button>
+    </div>
+
+    <pre id="out" style="margin-top:1rem; padding:.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:.25rem; white-space:pre-wrap;"></pre>
+  </section>
+
+  <script>
+    // Detecta el host actual (IP o dominio) y usa el puerto 8000 por defecto
+    const DEFAULT_BASE = `${location.protocol}//${location.hostname}:8000`;
+    const API_BASE = (import.meta.env?.PUBLIC_API_BASE) || DEFAULT_BASE;
+    const out = document.getElementById('out');
+    const cedula = document.getElementById('cedula');
+    const nombres = document.getElementById('nombres');
+    const apellidos = document.getElementById('apellidos');
+    const saldo = document.getElementById('saldo');
+
+    const print = (obj) => {
+      out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    };
+
+    async function call(path, init) {
+      try {
+        const res = await fetch(API_BASE + path, {
+          headers: { 'Content-Type': 'application/json' },
+          ...init,
+        });
+        const json = await res.json().catch(() => ({ ok: false, message: 'Respuesta no JSON' }));
+        print(json);
+        if (json?.data) {
+          cedula.value = json.data.cedula ?? cedula.value;
+          nombres.value = json.data.nombres ?? nombres.value;
+          apellidos.value = json.data.apellidos ?? apellidos.value;
+          saldo.value = json.data.saldo ?? saldo.value;
+        }
+      } catch (e) {
+        print({ ok: false, message: String(e) });
+      }
+    }
+
+    document.getElementById('btnGet').addEventListener('click', () => {
+      if (!cedula.value) return print('Ingrese la cédula');
+      call(`/clientes/${encodeURIComponent(cedula.value)}`, { method: 'GET' });
+    });
+
+    document.getElementById('btnPut').addEventListener('click', () => {
+      if (!cedula.value || !nombres.value || !apellidos.value || !saldo.value)
+        return print('Complete cédula, nombres, apellidos y saldo');
+      call('/clientes', {
+        method: 'PUT',
+        body: JSON.stringify({ cedula: cedula.value, nombres: nombres.value, apellidos: apellidos.value, saldo: Number(saldo.value) })
+      });
+    });
+
+    document.getElementById('btnAdd').addEventListener('click', () => {
+      if (!cedula.value || !saldo.value) return print('Ingrese cédula y monto (en saldo)');
+      call(`/clientes/${encodeURIComponent(cedula.value)}/add`, { method: 'POST', body: JSON.stringify({ monto: Number(saldo.value) }) });
+    });
+
+    document.getElementById('btnSub').addEventListener('click', () => {
+      if (!cedula.value || !saldo.value) return print('Ingrese cédula y monto (en saldo)');
+      call(`/clientes/${encodeURIComponent(cedula.value)}/sub`, { method: 'POST', body: JSON.stringify({ monto: Number(saldo.value) }) });
+    });
+  </script>
+</Layout>

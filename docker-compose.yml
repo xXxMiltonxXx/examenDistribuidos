@@ -1,0 +1,70 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./db/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+
+  server:
+    build: .
+    container_name: socket-server
+    depends_on:
+      - mongo
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 50007
+      MONGO_URI: mongodb://root:example@mongo:27017/?authSource=admin
+      MONGO_DB: clientes_db
+      MONGO_COLLECTION: personas
+    ports:
+      - "50007:50007"
+    restart: unless-stopped
+
+  gateway:
+    build: .
+    container_name: http-gateway
+    depends_on:
+      - server
+    environment:
+      SOCKET_HOST: socket-server
+      SOCKET_PORT: 50007
+    command: ["uvicorn", "http_gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express:1.0.0-alpha.4
+    container_name: mongo-express
+    depends_on:
+      - mongo
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: example
+      ME_CONFIG_MONGODB_SERVER: mongo
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontexam
+      dockerfile: Dockerfile
+    container_name: astro-frontend
+    ports:
+      - "4321:4321"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
