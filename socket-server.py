@@ -143,14 +143,10 @@ def handle_sub(col, cedula: str, monto_str: str) -> bytes:
             "nombres": nombres,
             "apellidos": apellidos,
         })
-        return json.dumps({
-            "ok": False,
-            "message": "Saldo insuficiente",
-            "data": {
-                "cedula": cedula,
-                "nombres": doc.get('nombres'),
-                "apellidos": doc.get('apellidos')
-            }
+        return json_response(False, "Saldo insuficiente", {
+            "cedula": cedula,
+            "nombres": doc.get('nombres'),
+            "apellidos": doc.get('apellidos')
         })
 
     # Actualizar saldo y registrar operación
