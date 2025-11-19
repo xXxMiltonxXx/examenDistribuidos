@@ -37,6 +37,9 @@ services:
     environment:
       SOCKET_HOST: socket-server
       SOCKET_PORT: 50007
+      MONGO_URI: mongodb://root:example@mongo:27017/?authSource=admin
+      MONGO_DB: clientes_db
+      MONGO_COLLECTION_OPS: operaciones
     command: ["uvicorn", "http_gateway:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"

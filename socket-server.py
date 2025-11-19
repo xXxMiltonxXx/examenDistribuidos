@@ -16,6 +16,7 @@ import socket
 from typing import Dict, Any
 
 from pymongo import MongoClient
+from datetime import datetime, timezone
 
 # Configuración del servidor TCP
 HOST = os.getenv('SERVER_HOST', '0.0.0.0')
@@ -26,6 +27,20 @@ BUFFER_SIZE = 4096
 MONGO_URI = os.getenv('MONGO_URI', 'mongodb://mongo:27017')
 MONGO_DB = os.getenv('MONGO_DB', 'clientes_db')
 MONGO_COLLECTION = os.getenv('MONGO_COLLECTION', 'personas')
+MONGO_COLLECTION_OPS = os.getenv('MONGO_COLLECTION_OPS', 'operaciones')
+
+
+def _log_operacion(col_ops, data: dict):
+    """Registra una operación en la colección de operaciones con timestamp UTC."""
+    doc = {
+        **data,
+        "ts": datetime.now(timezone.utc),
+    }
+    try:
+        col_ops.insert_one(doc)
+    except Exception as e:
+        # No interrumpir el proceso principal si falla el log
+        print(f"Error al registrar operación: {e}")
 
 
 def json_response(ok: bool, message: str, data: Dict[str, Any] | None = None) -> bytes:
@@ -66,6 +81,16 @@ def handle_put(col, cedula: str, nombres: str, apellidos: str, saldo_str: str) -
         {"$set": {"cedula": cedula, "nombres": nombres, "apellidos": apellidos, "saldo": saldo}},
         upsert=True,
     )
+    # Log de operación
+    _log_operacion(col.database[MONGO_COLLECTION_OPS], {
+        "cedula": cedula,
+        "tipo": "PUT",
+        "monto": None,
+        "saldo_nuevo": saldo,
+        "nombres": nombres,
+        "apellidos": apellidos,
+        "estado": "APROBADO",
+    })
     return json_response(True, "Registro creado/actualizado", {"cedula": cedula, "saldo": saldo})
 
 
@@ -81,7 +106,19 @@ def handle_add(col, cedula: str, monto_str: str) -> bytes:
     )
     if not res:
         return json_response(False, f"No existe registro para cédula {cedula}")
-    return json_response(True, "Saldo incrementado", {"cedula": cedula, "saldo": float(res.get("saldo", 0))})
+    nuevo_saldo = float(res.get("saldo", 0))
+    nombres = res.get("nombres", "")
+    apellidos = res.get("apellidos", "")
+    _log_operacion(col.database[MONGO_COLLECTION_OPS], {
+        "cedula": cedula,
+        "tipo": "ADD",
+        "monto": monto,
+        "saldo_nuevo": nuevo_saldo,
+        "estado": "APROBADO",
+        "nombres": nombres,
+        "apellidos": apellidos,
+    })
+    return json_response(True, "Saldo incrementado", {"cedula": cedula, "saldo": nuevo_saldo, "nombres": nombres, "apellidos": apellidos})
 
 
 def handle_sub(col, cedula: str, monto_str: str) -> bytes:
@@ -94,14 +131,45 @@ def handle_sub(col, cedula: str, monto_str: str) -> bytes:
     if not doc:
         return json_response(False, f"No existe registro para cédula {cedula}")
     saldo_actual = float(doc.get("saldo", 0))
+    nombres = doc.get("nombres", "")
+    apellidos = doc.get("apellidos", "")
     if saldo_actual < monto:
-        return json_response(False, "Saldo insuficiente", {"cedula": cedula, "saldo": saldo_actual})
+        _log_operacion(col.database[MONGO_COLLECTION_OPS], {
+            "cedula": cedula,
+            "tipo": "SUB",
+            "monto": monto,
+            "saldo_nuevo": saldo_actual,
+            "estado": "RECHAZADO",
+            "nombres": nombres,
+            "apellidos": apellidos,
+        })
+        return json.dumps({
+            "ok": False,
+            "message": "Saldo insuficiente",
+            "data": {
+                "cedula": cedula,
+                "nombres": doc.get('nombres'),
+                "apellidos": doc.get('apellidos')
+            }
+        })
+
+    # Actualizar saldo y registrar operación
     res = col.find_one_and_update(
         {"cedula": cedula},
         {"$inc": {"saldo": -monto}},
         return_document=True,
     )
-    return json_response(True, "Saldo decrementado", {"cedula": cedula, "saldo": float(res.get("saldo", 0))})
+    nuevo_saldo = float(res.get("saldo", 0))
+    _log_operacion(col.database[MONGO_COLLECTION_OPS], {
+        "cedula": cedula,
+        "tipo": "SUB",
+        "monto": monto,
+        "saldo_nuevo": nuevo_saldo,
+        "estado": "APROBADO",
+        "nombres": nombres,
+        "apellidos": apellidos,
+    })
+    return json_response(True, "Saldo decrementado", {"cedula": cedula, "saldo": nuevo_saldo, "nombres": nombres, "apellidos": apellidos})
 
 
 def main():
@@ -109,6 +177,8 @@ def main():
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client[MONGO_DB]
     col = db[MONGO_COLLECTION]
+    # Asegurar índices básicos
+    db[MONGO_COLLECTION_OPS].create_index([("cedula", 1), ("ts", -1)])
 
     # Socket TCP
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -1,0 +1,136 @@
+---
+import "../styles/global.css";
+import Layout from "../layouts/Layout.astro";
+---
+
+<Layout>
+  <section style="max-width: 900px; margin: 2rem auto;">
+    <h1 style="font-size: 1.75rem; font-weight: 700; margin-bottom: .5rem;">Operaciones por usuario (tiempo real)</h1>
+    <p style="margin-bottom: 1rem;">Ingrese una cédula para ver el histórico y nuevas operaciones en vivo vía WebSocket.</p>
+
+    <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-bottom: 1rem;">
+      <label>
+        Cédula
+        <input id="cedula" type="text" placeholder="1234567890" style="width:16rem; padding:.5rem; border:1px solid #ccc; border-radius:.25rem;" />
+      </label>
+      <button id="btnLoad" style="padding:.5rem .75rem; border:1px solid #2563eb; background:#1d4ed8; color:#fff; border-radius:.25rem;">Ver operaciones</button>
+      <span id="wsStatus" style="font-size:.9rem; color:#374151;">WS: desconectado</span>
+    </div>
+
+    <div style="overflow:auto; border:1px solid #e5e7eb; border-radius:.25rem;">
+      <table style="width:100%; border-collapse: collapse;">
+        <thead style="background:#f3f4f6;">
+          <tr>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Fecha</th>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Tipo</th>
+            <th style="text-align:right; padding:.5rem; border-bottom:1px solid #e5e7eb;">Monto</th>
+            <th style="text-align:right; padding:.5rem; border-bottom:1px solid #e5e7eb;">Saldo nuevo</th>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Estado</th>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Nombres</th>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Apellidos</th>
+            <th style="text-align:left; padding:.5rem; border-bottom:1px solid #e5e7eb;">Cédula</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+
+    <pre id="out" style="margin-top:1rem; padding:.75rem; background:#f9fafb; border:1px solid #e5e7eb; border-radius:.25rem; white-space:pre-wrap;"></pre>
+  </section>
+
+  <script>
+    const DEFAULT_BASE = `${location.protocol}//${location.hostname}:8000`;
+    const API_BASE = (import.meta.env?.PUBLIC_API_BASE) || DEFAULT_BASE;
+    const WS_URL = `ws://${location.hostname}:8000/ws`;
+
+    const cedula = document.getElementById('cedula');
+    const out = document.getElementById('out');
+    const rows = document.getElementById('rows');
+    const wsStatus = document.getElementById('wsStatus');
+    let currentCedula = '';
+    let ws;
+
+    const print = (obj) => {
+      out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    };
+
+    function formatTimestamp(isoString) {
+      if (!isoString) return '';
+      try {
+        const date = new Date(isoString);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0'); // Los meses son 0-indexados
+        const year = date.getFullYear();
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+      } catch (e) {
+        return isoString; // Fallback
+      }
+    }
+
+    function addRow(op) {
+      const tr = document.createElement('tr');
+      const estado = op.estado ?? 'APROBADO';
+      const estadoStyle = estado === 'RECHAZADO' ? 'color:#ef4444;' : '';
+      tr.innerHTML = `
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6;">${formatTimestamp(op.ts) ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6;">${op.tipo ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6; text-align:right;">${op.monto ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6; text-align:right;">${op.saldo_nuevo ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6; ${estadoStyle}">${estado}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6;">${op.nombres ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6;">${op.apellidos ?? ''}</td>
+        <td style="padding:.5rem; border-bottom:1px solid #f3f4f6;">${op.cedula ?? ''}</td>
+      `;
+      rows.prepend(tr);
+    }
+
+    async function loadOps() {
+      if (!currentCedula) return print('Ingrese la cédula');
+      try {
+        const res = await fetch(`${API_BASE}/operaciones?cedula=${encodeURIComponent(currentCedula)}`);
+        const json = await res.json();
+        if (!json.ok) return print(json);
+        rows.innerHTML = '';
+        json.data.forEach(addRow);
+      } catch (e) {
+        print({ ok: false, message: String(e) });
+      }
+    }
+
+    function ensureWS() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+      ws = new WebSocket(WS_URL);
+      ws.onopen = () => { wsStatus.textContent = 'WS: conectado'; };
+      ws.onclose = () => { wsStatus.textContent = 'WS: desconectado'; };
+      ws.onerror = () => { wsStatus.textContent = 'WS: error'; };
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg?.event === 'operacion' && msg?.data?.cedula && msg.data.cedula === currentCedula) {
+            const op = {
+              cedula: msg.data.cedula,
+              tipo: msg.data.tipo,
+              monto: msg.data.monto ?? null,
+              saldo_nuevo: msg.data.saldo ?? null,
+              ts: msg.data.ts ? msg.data.ts : new Date().toISOString(),
+              nombres: msg.data.nombres ?? '',
+              apellidos: msg.data.apellidos ?? '',
+              estado: msg.data.estado,
+            };
+            addRow(op);
+          }
+        } catch {}
+      };
+    }
+
+    document.getElementById('btnLoad').addEventListener('click', () => {
+      currentCedula = (cedula.value || '').trim();
+      if (!currentCedula) return print('Ingrese la cédula');
+      ensureWS();
+      loadOps();
+    });
+  </script>
+</Layout>

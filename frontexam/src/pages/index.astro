@@ -9,6 +9,10 @@ import Layout from "../layouts/Layout.astro";
       Cliente – Servidor (Sockets + MongoDB)
     </h1>
 
+    <p style="margin-bottom: .75rem;">
+      <a href="/operaciones" style="color:#2563eb; text-decoration:underline;">Ver operaciones en tiempo real</a>
+    </p>
+
     <p style="margin-bottom: 1rem;">
       Consulta y actualiza registros usando cédula. Operaciones: <code>GET</code>, <code>PUT</code>, <code>ADD</code>, <code>SUB</code>.
     </p>
@@ -49,11 +53,14 @@ import Layout from "../layouts/Layout.astro";
     // Detecta el host actual (IP o dominio) y usa el puerto 8000 por defecto
     const DEFAULT_BASE = `${location.protocol}//${location.hostname}:8000`;
     const API_BASE = (import.meta.env?.PUBLIC_API_BASE) || DEFAULT_BASE;
+    const WS_URL = `ws://${location.hostname}:8000/ws`;
     const out = document.getElementById('out');
     const cedula = document.getElementById('cedula');
     const nombres = document.getElementById('nombres');
     const apellidos = document.getElementById('apellidos');
     const saldo = document.getElementById('saldo');
+    let ws;
+    let currentCedula = '';
 
     const print = (obj) => {
       out.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
@@ -78,14 +85,40 @@ import Layout from "../layouts/Layout.astro";
       }
     }
 
+    function ensureWS() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+      ws = new WebSocket(WS_URL);
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg?.event === 'operacion' && msg?.data?.cedula) {
+            // Si coincide con la cédula en pantalla, refrescar los campos
+            if (currentCedula && msg.data.cedula === currentCedula) {
+              if (typeof msg.data.saldo === 'number') {
+                saldo.value = msg.data.saldo;
+              }
+              if (msg.data.nombres) nombres.value = msg.data.nombres;
+              if (msg.data.apellidos) apellidos.value = msg.data.apellidos;
+              // Mostrar la última operación
+              print({ ok: true, message: 'Actualización en tiempo real', data: { tipo: msg.data.tipo, cedula: msg.data.cedula, saldo: msg.data.saldo } });
+            }
+          }
+        } catch {}
+      };
+    }
+
     document.getElementById('btnGet').addEventListener('click', () => {
       if (!cedula.value) return print('Ingrese la cédula');
+      currentCedula = cedula.value.trim();
+      ensureWS();
       call(`/clientes/${encodeURIComponent(cedula.value)}`, { method: 'GET' });
     });
 
     document.getElementById('btnPut').addEventListener('click', () => {
       if (!cedula.value || !nombres.value || !apellidos.value || !saldo.value)
         return print('Complete cédula, nombres, apellidos y saldo');
+      currentCedula = cedula.value.trim();
+      ensureWS();
       call('/clientes', {
         method: 'PUT',
         body: JSON.stringify({ cedula: cedula.value, nombres: nombres.value, apellidos: apellidos.value, saldo: Number(saldo.value) })
@@ -94,11 +127,15 @@ import Layout from "../layouts/Layout.astro";
 
     document.getElementById('btnAdd').addEventListener('click', () => {
       if (!cedula.value || !saldo.value) return print('Ingrese cédula y monto (en saldo)');
+      currentCedula = cedula.value.trim();
+      ensureWS();
       call(`/clientes/${encodeURIComponent(cedula.value)}/add`, { method: 'POST', body: JSON.stringify({ monto: Number(saldo.value) }) });
     });
 
     document.getElementById('btnSub').addEventListener('click', () => {
       if (!cedula.value || !saldo.value) return print('Ingrese cédula y monto (en saldo)');
+      currentCedula = cedula.value.trim();
+      ensureWS();
       call(`/clientes/${encodeURIComponent(cedula.value)}/sub`, { method: 'POST', body: JSON.stringify({ monto: Number(saldo.value) }) });
     });
   </script>
